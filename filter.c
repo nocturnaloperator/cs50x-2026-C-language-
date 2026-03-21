@@ -1,0 +1,135 @@
+#include <getopt.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "helpers.h"
+
+int main(int argc, char *argv[])
+{
+    // Define allowable filters
+    char *filters = "bgrs";
+
+    // Get filter flag
+    char filter = getopt(argc, argv, filters);
+    if (filter == '?')
+    {
+        printf("Invalid filter.\n");
+        return 1;
+    }
+
+    // Ensure only one filter
+    if (getopt(argc, argv, filters) != -1)
+    {
+        printf("Only one filter allowed.\n");
+        return 2;
+    }
+
+    // Ensure proper usage
+    if (argc != optind + 2)
+    {
+        printf("Usage: ./filter [flag] infile outfile\n");
+        return 3;
+    }
+
+    // Filenames
+    char *infile = argv[optind];
+    char *outfile = argv[optind + 1];
+
+    // Open files
+    FILE *inptr = fopen(infile, "r");
+    if (inptr == NULL)
+    {
+        printf("Could not open %s.\n", infile);
+        return 4;
+    }
+
+    FILE *outptr = fopen(outfile, "w");
+    if (outptr == NULL)
+    {
+        fclose(inptr);
+        printf("Could not create %s.\n", outfile);
+        return 5;
+    }
+
+    // Read headers
+    BITMAPFILEHEADER bf;
+    fread(&bf, sizeof(BITMAPFILEHEADER), 1, inptr);
+
+    BITMAPINFOHEADER bi;
+    fread(&bi, sizeof(BITMAPINFOHEADER), 1, inptr);
+
+    // Validate BMP
+    if (bf.bfType != 0x4d42 || bf.bfOffBits != 54 || bi.biSize != 40 ||
+        bi.biBitCount != 24 || bi.biCompression != 0)
+    {
+        fclose(outptr);
+        fclose(inptr);
+        printf("Unsupported file format.\n");
+        return 6;
+    }
+
+    int height = abs(bi.biHeight);
+    int width = bi.biWidth;
+
+    // Allocate memory
+    RGBTRIPLE (*image)[width] = calloc(height, sizeof(RGBTRIPLE[width]));
+    if (image == NULL)
+    {
+        printf("Not enough memory.\n");
+        fclose(outptr);
+        fclose(inptr);
+        return 7;
+    }
+
+    // Padding
+    int padding = (4 - (width * sizeof(RGBTRIPLE)) % 4) % 4;
+
+    // Read pixels
+    for (int i = 0; i < height; i++)
+    {
+        fread(image[i], sizeof(RGBTRIPLE), width, inptr);
+        fseek(inptr, padding, SEEK_CUR);
+    }
+
+    // Apply filter
+    switch (filter)
+    {
+        case 'b':
+            blur(height, width, image);
+            break;
+
+        case 'g':
+            grayscale(height, width, image);
+            break;
+
+        case 'r':
+            reflect(height, width, image);
+            break;
+
+        case 's':
+            sepia(height, width, image);
+            break;
+    }
+
+    // Write headers
+    fwrite(&bf, sizeof(BITMAPFILEHEADER), 1, outptr);
+    fwrite(&bi, sizeof(BITMAPINFOHEADER), 1, outptr);
+
+    // Write pixels
+    for (int i = 0; i < height; i++)
+    {
+        fwrite(image[i], sizeof(RGBTRIPLE), width, outptr);
+
+        for (int k = 0; k < padding; k++)
+        {
+            fputc(0x00, outptr);
+        }
+    }
+
+    // Cleanup
+    free(image);
+    fclose(inptr);
+    fclose(outptr);
+
+    return 0;
+}
